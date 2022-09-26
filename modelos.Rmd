@@ -1,0 +1,203 @@
+---
+title: "Modelo PROBIT NO ESPACIAL"
+output: html_notebook
+---
+
+### Setup de los datos
+
+```{r}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(data.table)
+library(dplyr)
+library(pander)
+library(ggcorrplot)
+library(ggplot2)
+library(pROC)
+library(glmnet)
+#library(pls)
+library(MPV) 
+library(stargazer)
+```
+
+### importamos los datos
+
+```{r}
+data<-read.csv2("/home/jorge/Desktop/data science/tfm/Bases_finales_comunas_3.csv", header = TRUE, sep = ",", dec = ".")
+head(data)
+```
+
+### Agrupamos los datos para su modelamiento
+
+```{r}
+data0<-data %>% filter(ANYO!=2020)%>%
+  group_by(COMUNA) %>%
+  summarise_all(funs(mean), na.rm = FALSE)
+data0
+```
+
+### base reducida de la variables para suu modelamiento
+
+```{r}
+# Base reducida eliminando variables relacionadas
+data1<- dplyr::select(data0, c(9,10,12:14,17:19,49:60,62:80,104))
+```
+
+### Correlación entre las variables independientes
+
+```{r}
+library(psych)
+cor(data1[3:40])
+corPlot(data1[, 3:40],
+        upper = FALSE)
+```
+
+### Normalización de los datos
+
+```{r}
+# Normalizo las variables del datset 
+maxs <- as.numeric(apply( data1[,4:40], 2, max ))
+mins <- as.numeric(apply( data1[,4:40], 2, min ))
+dataset <- as.data.frame(scale( data1[,4:40],center = TRUE, scale = maxs - mins ) )
+```
+
+```{r}
+model_data <-cbind(dataset,Z_SAT=data1$Z_SAT)
+head(model_data)
+```
+
+### agregamos las variables sin agrupar por la media LONG y LATITUD
+
+```{r}
+model_data1 <- cbind(model_data, LONG = data1$LONG, LAT = data1$LAT) 
+```
+
+### split cross validation de los datos
+
+```{r}
+
+library(caret)
+# Dividir el dataset en Train y test
+split <- 0.8 # Porcentaje de datos al conjunto de entrenamiento
+trainIndex_3 <- createDataPartition(model_data1$Z_SAT, p = split, list = FALSE)
+xtrain <- model_data1[trainIndex_3,]
+xtest <- model_data1[-trainIndex_3,]
+
+# Revisión del balance de los datos de la matriz de entrenamiento
+table(xtrain$Z_SAT)
+```
+
+### primera parte: Modelo con todas las caracteristicas
+
+```{r}
+formula<-as.formula('Z_SAT ~ .')
+```
+
+### segunda parte: Modelo con las variables más significativas
+
+## creamos la formula
+
+```{r}
+formula1<-as.formula('Z_SAT ~ POBR  + S_BA  + CFDP_8  + V_VI')
+```
+
+## modelamos
+
+```{r}
+#Modelo Probit 
+modelo_probit<- glm(formula= formula1, data = xtrain, family = binomial(link = "probit"))
+summary(modelo_probit)
+```
+
+### EFECTOS MARGINALES
+
+```{r}
+modelo_probit$effects
+```
+
+### REVISAMOS LOS SUPUESTOS DEL MODELO
+
+## TEST DE JARQUE - BERA
+
+```{r}
+library(normtest)
+# supuestos del modelo
+# normalidad
+norm<-jb.norm.test(modelo_probit$resid)
+norm
+```
+
+## TEST QQPLOT
+
+```{r}
+#revisión del supuesto de linealidad
+
+plot(modelo_probit,1)
+```
+
+## MULTICOLINEALIDAD
+
+```{r}
+# multicolinealinealidad
+library(car)
+VIF<-vif(modelo1_3)
+VIF
+```
+
+### Pronóstico del modelo
+
+```{r}
+pred_probit <- predict(modelo_probit, newdata = xtest, type = "response")
+head(pred_probit)
+```
+
+```{r}
+probit_pred_clase <- factor(ifelse(pred_probit > 0.5, 1,0))
+levels(probit_pred_clase) <- c("0","1")
+levels(xtest$Z_SAT) <- c("0","1")
+```
+
+## Métricas de evaluación del modelo.
+
+### Matriz de confusión 
+
+```{r}
+tabla1<- table(Predic = probit_pred_clase, Real = xtest$Z_SAT)
+library(caret)
+matriz_probit<-confusionMatrix(tabla1)
+matriz_probit
+```
+
+
+```{r}
+# Error de clasificación
+library(Metrics)
+ce(actual = xtest$Z_SAT, predicted = probit_pred_clase)
+```
+
+### CURVA AUC
+
+```{r}
+# Área bajo la curva
+auc(actual = ifelse(xtest$Z_SAT == "1", 1, 0),
+    predicted = probit_pred_clase)
+```
+
+## PLOT CURVA AUC
+
+```{r}
+library(ROCR)
+ROCRpre_3 <- prediction(probit_pred_clase, as.numeric(xtest$Z_SAT))
+ROCRper_3 <- performance(ROCRpre_3, "tpr", "fpr")
+plot(ROCRper_3, colorize = TRUE, print.cutoffs.at = seq(0, 1, by = 0.1), text.adj = c(-0.2,1.7))
+```
+
+## TEST I MORAN
+
+```{r}
+nb3 <- knn2nb(knearneigh(cbind(xtrain$LONG, xtrain$LAT), k = 15))
+moran.test(x = modelo_probit$residuals, listw = nb2listw(nb3, style = "W"))
+moran.plot(x = modelo_probit$residuals,  listw = nb2listw(nb3, style = "W"), main = "Gráfico I Moran")
+```
+# MODELO PROBIT ESPACIAL 
+
