@@ -1,0 +1,804 @@
+---
+title: "TFM_grupo7"
+output:
+  word_document: default
+  html_document: default
+date: '2022-08-18'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(data.table)
+library(dplyr)
+library(pander)
+library(ggcorrplot)
+library(ggplot2)
+library(pROC)
+library(glmnet)
+#library(pls)
+library(MPV) 
+library(stargazer)
+```
+
+```{r}
+#Lectura de la base de datos
+
+data<-read.csv2("/home/jorge/Desktop/data science/tfm/Bases_finales_comunas_3.csv", header = TRUE, sep = ",", dec = ".")
+head(data)
+```
+
+```{r}
+#glimpse(data)
+```
+
+```{r}
+data0<-data %>% filter(ANYO!=2020)%>%
+  group_by(COMUNA) %>%
+  summarise_all(funs(mean), na.rm = FALSE)
+data0
+```
+
+```{r}
+library(psych)
+cor(data0[13:107])
+corPlot(data0[, 13:107],
+        upper = FALSE)
+
+
+```
+
+```{r}
+# Base reducida eliminando variables relacionadas
+data1<- dplyr::select(data0, c(9,10,12:14,17:19,49:60,62:80,104))
+dim(data1)
+#glimpse(data1)
+```
+
+```{r}
+library(psych)
+cor(data1[3:40])
+corPlot(data1[, 3:40],
+        upper = FALSE)
+```
+
+## Análisis del dataset por zona
+
+```{r}
+
+#Análisis de las variables diferenciadas por zona 
+
+Resumen<-data1 %>% 
+  group_by(Z_SAT) %>%
+  summarise_all(funs(mean, sd), na.rm = FALSE)
+Resumen
+```
+
+# Análisis modelo desbalanceado
+
+## División del data set en 80 -20
+
+```{r}
+library(caret)
+# Dividir el dataset en Train y test
+
+split <- 0.8 # Porcentaje de datos al conjunto de entrenamiento
+trainIndex <- createDataPartition(data1$Z_SAT, p = split, list = FALSE)
+X_train <- data1[trainIndex,]
+X_test <- data1[-trainIndex,]
+```
+
+```{r}
+dim(X_train)
+#head(X_train)
+
+```
+
+```{r}
+
+# Revisión del balance de los datos de la matriz de entrenamiento
+table(X_train$Z_SAT)
+```
+
+```{r}
+formula0<-as.formula(Z_SAT~.)
+```
+
+```{r}
+#Modelo Probit 
+modelo0<- glm(formula= formula0, data = X_train, family = binomial(link = "probit"))
+summary(modelo0)
+
+```
+
+```{r}
+modelo_aj<-step(modelo0, direction = "backward")
+```
+
+```{r}
+formula1<-as.formula('Z_SAT ~  FD_4 + S_BA + R_SA  ')
+```
+
+```{r}
+#Modelo Probit 
+modelo1<- glm(formula= formula1, data = X_train, family = binomial(link = "probit"))
+summary(modelo1)
+```
+
+```{r}
+library(normtest)
+# supuestos del modelo
+# normalidad
+norm<-jb.norm.test(modelo1$resid)
+norm
+```
+
+```{r}
+#revisión del supuesto de linealidad
+
+plot(modelo1,1)
+```
+
+```{r}
+# multicolinealinealidad
+library(car)
+VIF<-vif(modelo1)
+VIF
+```
+
+```{r}
+modelo1_pred <- predict(modelo1, newdata = X_test, type = "response")
+head(modelo1_pred)
+```
+
+```{r}
+modelo1_pred_clase <- factor(ifelse(modelo1_pred > 0.5, 1,0))
+levels(modelo1_pred_clase) <- c("0","1")
+levels(X_test$Z_SAT) <- c("0","1")
+```
+
+```{r}
+#evaluaci[on del modelo sin desbalancear]
+tabla1<- table(Predic = modelo1_pred_clase, Real = X_test$Z_SAT)
+library(caret)
+matriz1<-confusionMatrix(tabla1)
+matriz1
+```
+
+```{r}
+# Error de clasificación
+library(Metrics)
+ce(actual = X_test$Z_SAT, predicted = modelo1_pred_clase)
+```
+
+```{r}
+# Área bajo la curva
+auc(actual = ifelse(X_test$Z_SAT == "1", 1, 0),
+    predicted = modelo1_pred)
+```
+
+```{r}
+library(ROCR)
+ROCRpre <- prediction(modelo1_pred, as.numeric(X_test$Z_SAT))
+ROCRper <- performance(ROCRpre, "tpr", "fpr")
+plot(ROCRper, colorize = TRUE, print.cutoffs.at = seq(0, 1, by = 0.1), text.adj = c(-0.2,1.7))
+```
+
+\` \## Estimación del modelo con las variables escaladas
+
+## Escalamiento normal
+
+```{r}
+library(scales)
+library(kableExtra)
+data1.escalada<- as.data.frame(scale(data1[,c(2:37)]))
+#kable(head(data1.escalada),format = "markdown")
+
+```
+
+```{r}
+# se agrega la variable de zona saturada
+data2<-cbind(data1.escalada,Z_SAT=data1$Z_SAT)
+head(data2)
+```
+
+```{r}
+
+library(caret)
+# Dividir el dataset en Train y test
+split <- 0.8 # Porcentaje de datos al conjunto de entrenamiento
+trainIndex_2 <- createDataPartition(data2$Z_SAT, p = split, list = FALSE)
+X_train_2 <- data2[trainIndex_2,]
+X_test_2 <- data2[-trainIndex_2,]
+```
+
+```{r}
+# Revisión del balance de los datos de la matriz de entrenamiento
+table(X_train_2$Z_SAT)
+```
+
+```{r}
+formula<-as.formula('Z_SAT ~ .')
+```
+
+```{r}
+#Modelo Probit 
+modelo0_2<- glm(formula= formula, data = X_train_2, family = binomial(link = "probit"))
+summary(modelo0_2)
+```
+
+```{r}
+ modelo_aj2<-step(modelo0_2, direction = "backward")
+```
+
+```{r}
+
+formula1<-as.formula('Z_SAT ~  FD_4 + S_BA + R_SA + R_MU + R_OI  +  FP_14')
+```
+
+```{r}
+#Modelo Probit 
+modelo1_2<- glm(formula= formula1, data = X_train_2, family = binomial(link = "probit"))
+summary(modelo1_2)
+```
+
+```{r}
+library(normtest)
+# supuestos del modelo
+# normalidad
+norm<-jb.norm.test(modelo1_2$resid)
+norm
+```
+
+```{r}
+#revisión del supuesto de linealidad
+
+plot(modelo1_2,1)
+```
+
+```{r}
+# multicolinealinealidad
+library(car)
+VIF<-vif(modelo1_2)
+VIF
+```
+
+```{r}
+modelo1_2_pred <- predict(modelo1_2, newdata = X_test_2, type = "response")
+head(modelo1_2_pred)
+```
+
+```{r}
+modelo1_2_pred_clase <- factor(ifelse(modelo1_2_pred > 0.5, 1,0))
+levels(modelo1_2_pred_clase) <- c("0","1")
+levels(X_test_2$Z_SAT) <- c("0","1")
+```
+
+```{r}
+#evaluaci[on del modelo sin desbalancear]
+tabla1_2<- table(Predic = modelo1_2_pred_clase, Real = X_test_2$Z_SAT)
+library(caret)
+matriz1_4<-confusionMatrix(tabla1_4)
+matriz1_4
+```
+
+```{r}
+# Error de clasificación
+library(Metrics)
+ce(actual = X_test_2$Z_SAT, predicted = modelo1_2_pred_clase)
+```
+
+```{r}
+# Área bajo la curva
+auc(actual = ifelse(X_test_2$Z_SAT == "1", 1, 0),
+    predicted = modelo1_2_pred)
+```
+
+```{r}
+library(ROCR)
+ROCRpre_2 <- prediction(modelo1_2_pred, as.numeric(X_test_2$Z_SAT))
+ROCRper_2 <- performance(ROCRpre_2, "tpr", "fpr")
+plot(ROCRper_2, colorize = TRUE, print.cutoffs.at = seq(0, 1, by = 0.1), text.adj = c(-0.2,1.7))
+```
+
+## Escalado max min
+
+```{r}
+# Normalizo las variables del datset 
+maxs <- as.numeric(apply( data1[,2:38], 2, max ))
+mins <- as.numeric(apply( data1[,2:38], 2, min ))
+dataset <- as.data.frame(scale( data1[,2:38],center = TRUE, scale = maxs - mins ) )
+```
+
+```{r}
+data3<-cbind(dataset,Z_SAT=data1$Z_SAT)
+head(data3)
+```
+agregamos longitud y latitud al dataset para testmoran
+```{r}
+data4 <- cbind(data3, LONG = data1$LONG, LAT = data1$LAT) 
+```
+
+
+```{r}
+
+library(caret)
+# Dividir el dataset en Train y test
+split <- 0.8 # Porcentaje de datos al conjunto de entrenamiento
+trainIndex_3 <- createDataPartition(data4$Z_SAT, p = split, list = FALSE)
+X_train_3 <- data4[trainIndex_3,]
+X_test_3 <- data4[-trainIndex_3,]
+```
+
+```{r}
+# Revisión del balance de los datos de la matriz de entrenamiento
+table(X_train_3$Z_SAT)
+```
+
+```{r}
+formula<-as.formula('Z_SAT ~ .')
+```
+
+```{r}
+#Modelo Probit 
+modelo0_3<- glm(formula= formula, data = X_train_3, family = binomial(link = "probit"))
+summary(modelo0_3)
+
+```
+
+```{r}
+modelo_aj3<-step(modelo0_3, direction = "backward")
+```
+aca empieza el modelo
+```{r}
+
+formula1<-as.formula('Z_SAT ~ POBR  + S_BA  + R_NE  + V_VI')
+```
+
+```{r}
+#Modelo Probit 
+modelo1_3<- glm(formula= formula1, data = X_train_3, family = binomial(link = "probit"))
+summary(modelo1_3)
+```
+
+```{r}
+library(normtest)
+# supuestos del modelo
+# normalidad
+norm<-jb.norm.test(modelo1_3$resid)
+norm
+```
+
+```{r}
+#revisión del supuesto de linealidad
+
+plot(modelo1_3,1)
+```
+
+```{r}
+# multicolinealinealidad
+library(car)
+VIF<-vif(modelo1_3)
+VIF
+```
+
+```{r}
+modelo1_3_pred <- predict(modelo1_3, newdata = X_test_3, type = "response")
+head(modelo1_3_pred)
+```
+
+```{r}
+modelo1_3_pred_clase <- factor(ifelse(modelo1_3_pred > 0.5, 1,0))
+levels(modelo1_3_pred_clase) <- c("0","1")
+levels(X_test_3$Z_SAT) <- c("0","1")
+```
+
+
+```{r}
+#evaluaci[on del modelo sin desbalancear]
+tabla1_3<- table(Predic = modelo1_3_pred_clase, Real = X_test_3$Z_SAT)
+library(caret)
+matriz1_3<-confusionMatrix(tabla1_3)
+matriz1_3
+```
+
+```{r}
+# Error de clasificación
+library(Metrics)
+ce(actual = X_test_3$Z_SAT, predicted = modelo1_3_pred_clase)
+```
+
+```{r}
+# Área bajo la curva
+auc(actual = ifelse(X_test_3$Z_SAT == "1", 1, 0),
+    predicted = modelo1_3_pred)
+```
+
+```{r}
+library(ROCR)
+ROCRpre_3 <- prediction(modelo1_3_pred, as.numeric(X_test_3$Z_SAT))
+ROCRper_3 <- performance(ROCRpre_3, "tpr", "fpr")
+plot(ROCRper_3, colorize = TRUE, print.cutoffs.at = seq(0, 1, by = 0.1), text.adj = c(-0.2,1.7))
+```
+
+
+
+
+
+
+
+
+
+```{r}
+nb3 <- knn2nb(knearneigh(cbind(X_train_3$LONG, X_train_3$LAT), k = 10))
+moran.test(x = modelo1_3$residuals, listw = nb2listw(nb3, style = "W"))
+moran.plot(x = modelo1_3$residuals,  listw = nb2listw(nb3, style = "W"), main = "Gráfico I Moran")
+```
+
+
+```{r}
+nb<-knn2nb(knearneigh(cbind(data1$LONG, data1$LAT), k=10))
+imoranlocal<-as.data.frame(localmoran(x = modelo1_3$resid, listw = nb2listw(nb, style="W")))
+dataset$registro <- 1
+
+dataset2 <- dataset 
+dataset2<-rename(data1, LONG=LONG, LAT=LAT)
+
+
+pl_pt(dataset2, size2=1, color2=imoranlocal$Z.Ii, dd=15, sz=200)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#################################################################### 
+
+## Modelos balanceados
+
+## Estimación modelo balanceado datos originales
+
+```{r}
+library(ROSE)
+bal_data1 <- ovun.sample(Z_SAT ~ .,
+                           data = data1,
+                           seed = 123,
+                           method = "over")$data # Don't forget the $data at the end
+
+table(bal_data1$default)
+```
+
+```{r}
+prop.table(table(bal_data1$Z_SAT))
+```
+
+```{r}
+library(caret)
+split <- 0.8 # Porcentaje de datos al conjunto de entrenamiento
+trainIndexs_bal1 <- createDataPartition(bal_data1$Z_SAT, p = split, list = FALSE)
+X_train_bal1 <- bal_data1[trainIndexs_bal1,]
+X_test_bal1 <- bal_data1[-trainIndexs_bal1,]
+```
+
+```{r}
+formula<-as.formula('Z_SAT ~ .')
+```
+
+```{r}
+#Modelo Probit 
+modelo0_bal1<- glm(formula= formula, data = X_train_bal1, family = binomial(link = "probit"))
+summary(modelo0_bal1)
+```
+
+```{r}
+modelo_ajbal1<-step(modelo0_bal1, direction = "backward")
+```
+
+## Modelo con variables significativas
+
+```{r}
+
+formula_bal1<-as.formula('Z_SAT ~ POBR  + FD_3 + S_BA  + R_MU + R_PI + R_NE + FP_2 + FP_3  + FP_15')
+```
+
+```{r}
+#Modelo Probit 
+modelo1_bal1<- glm(formula= formula_bal1, data = X_train_bal1, family = binomial(link = "probit"))
+summary(modelo1_bal1)
+```
+
+```{r}
+library(normtest)
+# supuestos del modelo
+# normalidad
+norm<-jb.norm.test(modelo1_bal1$resid)
+norm
+```
+
+```{r}
+#revisión del supuesto de linealidad
+
+plot(modelo1_bal1,1)
+```
+
+```{r}
+# multicolinealinealidad
+library(car)
+VIF<-vif(modelo1_bal1)
+VIF
+```
+
+```{r}
+modelo1_bal1_pred <- predict(modelo1_bal1, newdata = X_test_bal1, type = "response")
+head(modelo1_bal1_pred)
+```
+
+```{r}
+modelo1_bal1_pred_clase <- factor(ifelse(modelo1_bal1_pred > 0.5, 1,0))
+levels(modelo1_bal1_pred_clase) <- c("0","1")
+levels(X_test_bal1$Z_SAT) <- c("0","1")
+```
+
+```{r}
+#evaluaci[on del modelo sin desbalancear]
+tabla1_bal1<- table(Predic = modelo1_bal1_pred_clase, Real = X_test_bal1$Z_SAT)
+library(caret)
+matriz1_bal1<-confusionMatrix(tabla1_bal1)
+matriz1_bal1
+```
+
+```{r}
+# Error de clasificación
+library(Metrics)
+ce(actual = X_test_bal1$Z_SAT, predicted = modelo1_bal1_pred_clase)
+```
+
+```{r}
+# Área bajo la curva
+auc(actual = ifelse(X_test_bal1$Z_SAT == "1", 1, 0),
+    predicted = modelo1_bal1_pred)
+```
+
+```{r}
+library(ROCR)
+ROCRpre_bal1 <- prediction(modelo1_bal1_pred, as.numeric(X_test_bal1$Z_SAT))
+ROCRper_bal1 <- performance(ROCRpre_bal1, "tpr", "fpr")
+plot(ROCRper_bal1, colorize = TRUE, print.cutoffs.at = seq(0, 1, by = 0.1), text.adj = c(-0.2,1.7))
+```
+
+### Modelo balanceado con datos estandarizados
+
+```{r}
+library(ROSE)
+bal_data2 <- ovun.sample(Z_SAT ~ .,
+                           data = data2,
+                           seed = 123,
+                           method = "over")$data # Don't forget the $data at the end
+
+table(bal_data2$default)
+```
+
+```{r}
+prop.table(table(bal_data2$Z_SAT))
+```
+
+```{r}
+library(caret)
+split <- 0.8 # Porcentaje de datos al conjunto de entrenamiento
+trainIndexs_bal2 <- createDataPartition(bal_data2$Z_SAT, p = split, list = FALSE)
+X_train_bal2 <- bal_data2[trainIndexs_bal2,]
+X_test_bal2 <- bal_data2[-trainIndexs_bal2,]
+```
+
+```{r}
+formula<-as.formula('Z_SAT ~ .')
+```
+
+```{r}
+#Modelo Probit 
+modelo0_bal2<- glm(formula= formula, data = X_train_bal2, family = binomial(link = "probit"))
+summary(modelo0_bal2)
+```
+
+```{r}
+modelo_ajbal2<-step(modelo0_bal2, direction = "backward")
+```
+
+## Modelo con variables significativas
+
+```{r}
+
+formula_bal2<-as.formula('Z_SAT ~ POBR + FD_3 + S_BA + R_MU+ R_PI + R_NE + FP_2 + FP_3 + FP_15')
+```
+
+```{r}
+#Modelo Probit 
+modelo1_bal2<- glm(formula= formula_bal2, data = X_train_bal2, family = binomial(link = "probit"))
+summary(modelo1_bal2)
+```
+
+```{r}
+library(normtest)
+# supuestos del modelo
+# normalidad
+norm<-jb.norm.test(modelo1_bal2$resid)
+norm
+```
+
+```{r}
+#revisión del supuesto de linealidad
+
+plot(modelo1_bal2,1)
+```
+
+```{r}
+# multicolinealinealidad
+library(car)
+VIF<-vif(modelo1_bal2)
+VIF
+```
+
+```{r}
+modelo1_bal2_pred <- predict(modelo1_bal2, newdata = X_test_bal2, type = "response")
+head(modelo1_bal2_pred)
+```
+
+```{r}
+modelo1_bal2_pred_clase <- factor(ifelse(modelo1_bal2_pred > 0.5, 1,0))
+levels(modelo1_bal2_pred_clase) <- c("0","1")
+levels(X_test_bal2$Z_SAT) <- c("0","1")
+```
+
+```{r}
+#evaluaci[on del modelo sin desbalancear]
+tabla1_bal2<- table(Predic = modelo1_bal2_pred_clase, Real = X_test_bal2$Z_SAT)
+library(caret)
+matriz1_bal2<-confusionMatrix(tabla1_bal2)
+matriz1_bal2
+```
+
+```{r}
+# Error de clasificación
+library(Metrics)
+ce(actual = X_test_bal2$Z_SAT, predicted = modelo1_bal2_pred_clase)
+```
+
+```{r}
+# Área bajo la curva
+auc(actual = ifelse(X_test_bal2$Z_SAT == "1", 1, 0),
+    predicted = modelo1_bal2_pred)
+```
+
+```{r}
+library(ROCR)
+ROCRpre_bal2 <- prediction(modelo1_bal2_pred, as.numeric(X_test_bal2$Z_SAT))
+ROCRper_bal2 <- performance(ROCRpre_bal2, "tpr", "fpr")
+plot(ROCRper_bal2, colorize = TRUE, print.cutoffs.at = seq(0, 1, by = 0.1), text.adj = c(-0.2,1.7))
+```
+
+### Modelo balanceado con datos escalados max-min
+
+```{r}
+library(ROSE)
+bal_data3 <- ovun.sample(Z_SAT ~ .,
+                           data = data3,
+                           seed = 123,
+                           method = "over")$data # Don't forget the $data at the end
+
+table(bal_data3$default)
+```
+
+```{r}
+prop.table(table(bal_data3$Z_SAT))
+```
+
+```{r}
+library(caret)
+split <- 0.8 # Porcentaje de datos al conjunto de entrenamiento
+trainIndexs_bal3 <- createDataPartition(bal_data3$Z_SAT, p = split, list = FALSE)
+X_train_bal3 <- bal_data2[trainIndexs_bal3,]
+X_test_bal3 <- bal_data2[-trainIndexs_bal3,]
+```
+
+```{r}
+formula<-as.formula('Z_SAT ~ .')
+```
+
+```{r}
+#Modelo Probit 
+modelo0_bal3<- glm(formula= formula, data = X_train_bal3, family = binomial(link = "probit"))
+summary(modelo0_bal2)
+```
+
+```{r}
+modelo_ajbal3<-step(modelo0_bal3, direction = "backward")
+```
+
+## Modelo con variables significativas
+
+```{r}
+
+formula_bal3<-as.formula('Z_SAT ~ POBR  + FD_3 + FD_4 + S_BA  + R_PI + R_NE + FP_2 +  FP_3  + FP_15')
+```
+
+```{r}
+#Modelo Probit 
+modelo1_bal3<- glm(formula= formula_bal3, data = X_train_bal3, family = binomial(link = "probit"))
+summary(modelo1_bal3)
+```
+
+```{r}
+library(normtest)
+# supuestos del modelo
+# normalidad
+norm<-jb.norm.test(modelo1_bal3$resid)
+norm
+```
+
+```{r}
+#revisión del supuesto de linealidad
+
+plot(modelo1_bal3,1)
+```
+
+```{r}
+# multicolinealinealidad
+library(car)
+VIF<-vif(modelo1_bal3)
+VIF
+```
+
+```{r}
+modelo1_bal3_pred <- predict(modelo1_bal3, newdata = X_test_bal3, type = "response")
+head(modelo1_bal3_pred)
+```
+
+```{r}
+modelo1_bal3_pred_clase <- factor(ifelse(modelo1_bal3_pred > 0.5, 1,0))
+levels(modelo1_bal3_pred_clase) <- c("0","1")
+levels(X_test_bal3$Z_SAT) <- c("0","1")
+```
+
+```{r}
+#evaluaci[on del modelo sin desbalancear]
+tabla1_bal3<- table(Predic = modelo1_bal3_pred_clase, Real = X_test_bal3$Z_SAT)
+library(caret)
+matriz1_bal3<-confusionMatrix(tabla1_bal3)
+matriz1_bal3
+```
+
+```{r}
+# Error de clasificación
+library(Metrics)
+ce(actual = X_test_bal3$Z_SAT, predicted = modelo1_bal3_pred_clase)
+```
+
+```{r}
+# Área bajo la curva
+auc(actual = ifelse(X_test_bal3$Z_SAT == "1", 1, 0),
+    predicted = modelo1_bal3_pred)
+```
+
+```{r}
+library(ROCR)
+ROCRpre_bal3 <- prediction(modelo1_bal3_pred, as.numeric(X_test_bal3$Z_SAT))
+ROCRper_bal3 <- performance(ROCRpre_bal3, "tpr", "fpr")
+plot(ROCRper_bal3, colorize = TRUE, print.cutoffs.at = seq(0, 1, by = 0.1), text.adj = c(-0.2,1.7))
+```

@@ -1,0 +1,387 @@
+---
+title: "Untitled"
+output: html_document
+date: '2022-08-30'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r}
+
+library(data.table)
+library(dplyr)
+library(pander)
+library(pls)
+library(spdep)
+library(expm)
+library(coda)
+library(methods)
+library(MASS)
+library(boot)
+library(splines)
+library(sp)
+library(LearnBayes)
+library(nlme)
+library(gmodels)
+library(maptools)
+library(Matrix)
+library(spatialreg)
+```
+
+```{r}
+#Lectura de la base de datos
+
+data<-read.csv2("/home/jorge/Desktop/data science/tfm/Bases_finales_comunas_3.csv", header = TRUE, sep = ",", dec = ".")
+head(data)
+```
+
+
+```{r}
+data0<-data %>% filter(ANYO!=2020)%>%
+  group_by(COMUNA) %>%  summarise_all(funs(mean), na.rm = FALSE)
+data0
+
+```
+
+```{r}
+#library(psych)
+cor(data0[13:107])
+corPlot(data0[, 13:107],
+        upper = FALSE)
+
+
+```
+data0[13:107]
+
+
+
+
+```{r}
+# Base reducida eliminando variables relacionadas
+data1<- dplyr::select(data0, c(12:14,17:19,49:60,62:80,104))
+dim(data1)
+#glimpse(data1)
+```
+```{r}
+#library(psych)
+cor(data1[2:38])
+corPlot(data1[, 2:38],
+        upper = FALSE)
+```
+```{r}
+data2<-cbind(data1, LONG=data0$LONG, LAT=data0$LAT)
+data2
+```
+##### Modelo desbalanceado
+### Modelo con datos originales
+```{r}
+library(caret)
+# Dividir el dataset en Train y test
+
+split <- 0.8 # Porcentaje de datos al conjunto de entrenamiento
+trainIndex <- createDataPartition(data2$Z_SAT, p = split, list = FALSE)
+X_train <- data2[trainIndex,]
+X_test <- data2[-trainIndex,]
+#X_train 
+```
+
+
+```{r}
+nb_data <- knn2nb(knearneigh(cbind(X_train$LAT, X_train$LONG), k=10, use_kd_tree=TRUE))
+nb_datalistw_data <- nb2listw(nb_data, style="W")
+nb_datalistw_data
+```
+
+```{r}
+listw_data <- nb2listw(nb_data, style="W")
+listw_data
+```
+
+```{r}
+W1_data <- as(as_dgRMatrix_listw(listw_data), "CsparseMatrix")
+W1_data
+```
+
+
+```{r}
+library(ProbitSpatial)
+	fit1_cond <- ProbitSpatialFit(Z_SAT ~  FD_4 + S_BA + R_SA, 
+		W=W1_data, data=X_train, DGP='SAR', method="conditional", varcov="varcov")
+	summary(fit1_cond)
+```
+
+```{r}
+fit1_FL <- ProbitSpatialFit(Z_SAT ~  FD_4 + S_BA + R_SA, 
+		W=W1_data, data=X_train, DGP='SAR', method="full-lik", varcov="varcov")
+	summary(fit1_FL)
+```
+
+```{r}
+fit1_cond_10nn <- ProbitSpatialFit(Z_SAT ~  FD_4 + S_BA + R_SA, 
+		W=W1_data, data=X_train, DGP='SAR', method="conditional", varcov="varcov",
+		control=list(iW_CL=10))
+summary(fit1_cond_10nn)
+```
+
+
+
+
+### Modelo con datos estandarizados
+## Escalamiento normal
+```{r}
+library(scales)
+library(kableExtra)
+data1.normal<- as.data.frame(scale(data1[,c(2:37)]))
+data1_n<-cbind(data1.normal, LONG=data0$LONG, LAT=data0$LAT, Z_SAT=data0$Z_SAT)
+dim(data1_n)
+
+```
+```{r}
+library(caret)
+# Dividir el dataset en Train y test
+
+split <- 0.8 # Porcentaje de datos al conjunto de entrenamiento
+trainIndex_n <- createDataPartition(data1_n$Z_SAT, p = split, list = FALSE)
+X_train_n <- data1_n[trainIndex_n,]
+X_test_n <- data1_n[-trainIndex_n,]
+#X_train
+```
+```{r}
+library(ProbitSpatial)
+	fit1_cond <- ProbitSpatialFit(Z_SAT ~  FD_4 + S_BA + R_SA + R_MU + R_OI  +  FP_14, 
+		W=W1_data, data=X_train_n, DGP='SAR', method="conditional", varcov="varcov")
+	summary(fit1_cond)
+```
+```{r}
+fit1_FL <- ProbitSpatialFit(Z_SAT ~  FD_4 + S_BA + R_SA + R_MU + R_OI  +  FP_14, 
+		W=W1_data, data=X_train_n, DGP='SAR', method="full-lik", varcov="varcov")
+	summary(fit1_FL)
+```
+```{r}
+fit1_cond_10nn <- ProbitSpatialFit( Z_SAT ~  FD_4 + S_BA + R_SA + R_MU + R_OI  +  FP_14, 
+		W=W1_data, data=X_train_n, DGP='SAR', method="conditional", varcov="varcov",
+		control=list(iW_CL=10))
+summary(fit1_cond_10nn)
+```
+
+
+
+### Modelo con los datos escalados con Max y Min
+```{r}
+# Normalizo las variables del datset 
+maxs <- as.numeric(apply( data1[,2:38], 2, max ))
+mins <- as.numeric(apply( data1[,2:38], 2, min ))
+dataset <- as.data.frame(scale( data1[,2:38],center = TRUE, scale = maxs - mins ) )
+```
+```{r}
+data1_m<-cbind(dataset,Z_SAT=data0$Z_SAT, LONG=data0$LONG, LAT=data0$LAT)
+head(data1_m)
+```
+```{r}
+library(caret)
+# Dividir el dataset en Train y test
+
+split <- 0.8 # Porcentaje de datos al conjunto de entrenamiento
+trainIndex_m <- createDataPartition(data1_m$Z_SAT, p = split, list = FALSE)
+X_train_m <- data1_m[trainIndex_m,]
+X_test_m <- data1_m[-trainIndex_m,]
+#X_train
+```
+```{r}
+library(ProbitSpatial)
+	fit1_cond <- ProbitSpatialFit(Z_SAT ~ POBR  + S_BA  + R_NE  + V_VI, 
+		W=W1_data, data=X_train_m, DGP='SAR', method="conditional", varcov="varcov")
+	summary(fit1_cond)
+```
+```{r}
+fit1_FL <- ProbitSpatialFit(Z_SAT ~ POBR  + S_BA  + R_NE  + V_VI, 
+		W=W1_data, data=X_train_m, DGP='SAR', method="full-lik", varcov="varcov")
+	summary(fit1_FL)
+```
+```{r}
+fit1_cond_10nn <- ProbitSpatialFit(Z_SAT ~ POBR  + S_BA  + R_NE  + V_VI, 
+		W=W1_data, data=X_train_m, DGP='SAR', method="conditional", varcov="varcov",
+		control=list(iW_CL=10))
+summary(fit1_cond_10nn)
+```
+
+
+
+```{r}
+fit1_cond_10nn$coeff
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+###Modelo balanceado
+### Modelo con datos originales
+```{r}
+library(ROSE)
+bal_data1 <- ovun.sample(Z_SAT ~ .,
+                           data = data2,
+                           seed = 123,
+                           method = "over")$data # Don't forget the $data at the end
+
+table(bal_data2$default)
+```
+```{r}
+library(caret)
+# Dividir el dataset en Train y test
+
+split <- 0.8 # Porcentaje de datos al conjunto de entrenamiento
+trainIndex <- createDataPartition(bal_data1$Z_SAT, p = split, list = FALSE)
+X_train <- data2[trainIndex,]
+X_test <- data2[-trainIndex,]
+sum(is.na(X_train)) 
+```
+```{r}
+heatmaply::heatmaply_na(X_train)
+```
+```{r}
+nb_data <- knn2nb(knearneigh(cbind(X_train$LAT, X_train$LONG), k=15, use_kd_tree=TRUE))
+nb_datalistw_data <- nb2listw(nb_data, style="W")
+nb_datalistw_data
+```
+```{r}
+listw_data <- nb2listw(nb_data, style="W")
+listw_data
+```
+```{r}
+W1_data <- as(as_dgRMatrix_listw(listw_data), "CsparseMatrix")
+W1
+```
+```{r}
+library(ProbitSpatial)
+	fit1_cond <- ProbitSpatialFit(Z_SAT ~  FD_4 + S_BA + R_SA, 
+		W=W1_data, data=X_train, DGP='SAR', method="conditional", varcov="varcov")
+	summary(fit1_cond)
+```
+```{r}
+fit1_FL <- ProbitSpatialFit(Z_SAT ~  FD_4 + S_BA + R_SA, 
+		W=W1_data, data=X_train, DGP='SAR', method="full-lik", varcov="varcov")
+	summary(fit1_FL)
+```
+```{r}
+fit1_cond_10nn <- ProbitSpatialFit(Z_SAT ~  FD_4 + S_BA + R_SA, 
+		W=W1_data, data=X_train, DGP='SAR', method="conditional", varcov="varcov",
+		control=list(iW_CL=10))
+summary(fit1_cond_10nn)
+```
+### Modelo con datos estandarizados
+## Escalamiento normal
+```{r}
+library(scales)
+library(kableExtra)
+data1.normal<- as.data.frame(scale(data1[,c(2:37)]))
+data1_n<-cbind(data1.normal, LONG=data0$LONG, LAT=data0$LAT, Z_SAT=data0$Z_SAT)
+dim(data1_n)
+
+```
+```{r}
+library(caret)
+# Dividir el dataset en Train y test
+
+split <- 0.8 # Porcentaje de datos al conjunto de entrenamiento
+trainIndex_n <- createDataPartition(data1_n$Z_SAT, p = split, list = FALSE)
+X_train_n <- data1_n[trainIndex_n,]
+X_test_n <- data1_n[-trainIndex_n,]
+#X_train
+```
+```{r}
+library(ProbitSpatial)
+	fit1_cond <- ProbitSpatialFit(Z_SAT ~  FD_4 + S_BA + R_SA + R_MU + R_OI  +  FP_14, 
+		W=W1_data, data=X_train_n, DGP='SAR', method="conditional", varcov="varcov")
+	summary(fit1_cond)
+```
+```{r}
+fit1_FL <- ProbitSpatialFit(Z_SAT ~  FD_4 + S_BA + R_SA + R_MU + R_OI  +  FP_14, 
+		W=W1_data, data=X_train_n, DGP='SAR', method="full-lik", varcov="varcov")
+	summary(fit1_FL)
+```
+```{r}
+fit1_cond_10nn <- ProbitSpatialFit( Z_SAT ~  FD_4 + S_BA + R_SA + R_MU + R_OI  +  FP_14, 
+		W=W1_data, data=X_train_n, DGP='SAR', method="conditional", varcov="varcov",
+		control=list(iW_CL=10))
+summary(fit1_cond_10nn)
+```
+### Modelo con los datos escalados con Max y Min
+```{r}
+# Normalizo las variables del datset 
+maxs <- as.numeric(apply( data1[,2:37], 2, max ))
+mins <- as.numeric(apply( data1[,2:37], 2, min ))
+dataset <- as.data.frame(scale( data1[,2:37],center = TRUE, scale = maxs - mins ) )
+```
+```{r}
+data1_m<-cbind(dataset,Z_SAT=data0$Z_SAT, LONG=data0$LONG, LAT=data0$LAT)
+head(data1_m)
+```
+```{r}
+library(caret)
+# Dividir el dataset en Train y test
+
+split <- 0.8 # Porcentaje de datos al conjunto de entrenamiento
+trainIndex_m <- createDataPartition(data1_m$Z_SAT, p = split, list = FALSE)
+X_train_m <- data1_m[trainIndex_m,]
+X_test_m <- data1_m[-trainIndex_m,]
+#X_train
+```
+```{r}
+library(ProbitSpatial)
+	fit1_cond <- ProbitSpatialFit(Z_SAT ~ POBR  + S_BA  + R_NE  + V_VI, 
+		W=W1_data, data=X_train_m, DGP='SAR', method="conditional", varcov="varcov")
+	summary(fit1_cond)
+```
+```{r}
+fit1_FL <- ProbitSpatialFit(Z_SAT ~ POBR  + S_BA  + R_NE  + V_VI, 
+		W=W1_data, data=X_train_m, DGP='SAR', method="full-lik", varcov="varcov")
+	summary(fit1_FL)
+```
+```{r}
+fit1_cond_10nn <- ProbitSpatialFit(Z_SAT ~ POBR  + S_BA  + R_NE  + V_VI, 
+		W=W1_data, data=X_train_m, DGP='SAR', method="conditional", varcov="varcov",
+		control=list(iW_CL=10))
+summary(fit1_cond_10nn)
+
+```{r}
